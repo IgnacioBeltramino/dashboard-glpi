@@ -14,8 +14,9 @@ function formatTime(iso) {
 
 function NotifCard({ notif, onDismiss }) {
   const isFollowup = notif.type === "new_followup"
+  const isRejection = notif.type === "solution_rejected"
   const key = notif.type + "-" + notif.id
-  const accent = isFollowup ? "#fbbf24" : "#60a5fa"
+  const accent = isFollowup ? "#fbbf24" : isRejection ? "#f87171" : "#60a5fa"
   return (
     <div className="nc card" style={{ "--nc": accent }}>
       <div className="nc-top">
@@ -30,6 +31,11 @@ function NotifCard({ notif, onDismiss }) {
           {notif.content && (
             <div className="nc-body">{notif.content.replace(/<[^>]*>/g, "").slice(0, 250)}</div>
           )}
+          <a href={ticketUrl(notif.ticket_id)} target="_blank" rel="noreferrer" className="nc-link">Ir al ticket &rarr;</a>
+        </>
+      ) : isRejection ? (
+        <>
+          <div className="nc-title"><span className="nc-id">#{notif.ticket_id}</span> {notif.ticket_title}</div>
           <a href={ticketUrl(notif.ticket_id)} target="_blank" rel="noreferrer" className="nc-link">Ir al ticket &rarr;</a>
         </>
       ) : (
@@ -60,79 +66,7 @@ function Column({ title, accent, notifications, onDismiss, emptyMsg }) {
   )
 }
 
-function CatchUpCard({ event }) {
-  const isFollowup = event.type === "new_followup"
-  const accent = isFollowup ? "#fbbf24" : "#60a5fa"
-  return (
-    <div className="nc card" style={{ "--nc": accent }}>
-      <div className="nc-top">
-        <span className="nc-dot" />
-        {isFollowup && <span className="nc-time">{event.author}</span>}
-      </div>
-      {isFollowup ? (
-        <>
-          <div className="nc-title"><span className="nc-id">#{event.ticket_id}</span> {event.ticket_title}</div>
-          {event.content && (
-            <div className="nc-body">{event.content.replace(/<[^>]*>/g, "").slice(0, 200)}</div>
-          )}
-        </>
-      ) : (
-        <div className="nc-title"><span className="nc-id">#{event.id}</span> {event.title}</div>
-      )}
-      <a href={ticketUrl(isFollowup ? event.ticket_id : event.id)} target="_blank" rel="noreferrer" className="nc-link">Ir al ticket &rarr;</a>
-    </div>
-  )
-}
-
-function CatchUpSection({ data, onDismiss }) {
-  const [collapsed, setCollapsed] = useState(false)
-  if (!data) return null
-  const total = data.tickets.length + data.followups.length
-  return (
-    <div className="cu-wrap">
-      <div className="cu-header" onClick={() => setCollapsed(c => !c)}>
-        <div className="cu-header-left">
-          <span className="cu-dot" />
-          <span className="cu-title">Mientras no estabas</span>
-          <span className="badge">{total}</span>
-          <span className="cu-period">desde {formatTime(data.since)}</span>
-        </div>
-        <div className="cu-header-right">
-          <span className="cu-chevron">{collapsed ? "v" : "^"}</span>
-          <button className="nc-x" onClick={(e) => { e.stopPropagation(); onDismiss() }}>&times;</button>
-        </div>
-      </div>
-      {!collapsed && (
-        <div className="cu-body">
-          {data.followups.length > 0 && (
-            <div>
-              <div className="col-title-row" style={{ "--accent": "#fbbf24" }}>
-                <span className="col-title">Seguimientos</span>
-                <span className="badge">{data.followups.length}</span>
-              </div>
-              <div className="nc-list">
-                {data.followups.map(f => <CatchUpCard key={"cu-f-" + f.id} event={f} />)}
-              </div>
-            </div>
-          )}
-          {data.tickets.length > 0 && (
-            <div>
-              <div className="col-title-row" style={{ "--accent": "#60a5fa" }}>
-                <span className="col-title">Tickets nuevos</span>
-                <span className="badge">{data.tickets.length}</span>
-              </div>
-              <div className="nc-list">
-                {data.tickets.map(t => <CatchUpCard key={"cu-t-" + t.id} event={t} />)}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-export default function Home({ notifications, onDismiss, onRefresh, catchUp, onDismissCatchUp }) {
+export default function Home({ notifications, onDismiss, onRefresh }) {
   const [lastRefresh, setLastRefresh] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -159,12 +93,10 @@ export default function Home({ notifications, onDismiss, onRefresh, catchUp, onD
             </span>
           )}
           <button className="btn" onClick={handleRefresh} disabled={refreshing}>
-            {refreshing ? "..." : "Actualizar"}
+            {refreshing ? "..." : "↻ Actualizar"}
           </button>
         </div>
       </div>
-
-      <CatchUpSection data={catchUp} onDismiss={onDismissCatchUp} />
 
       <div className="notif-grid">
         <Column title="Seguimientos"   accent="#fbbf24" notifications={followups} onDismiss={onDismiss} emptyMsg="Sin seguimientos nuevos." />
@@ -195,17 +127,6 @@ export default function Home({ notifications, onDismiss, onRefresh, catchUp, onD
         .nc-body { font-size: 12px; color: var(--text-muted); background: rgba(255,255,255,0.04); border-radius: 8px; padding: 8px 10px; line-height: 1.6; border: 1px solid var(--border); margin-bottom: 8px; }
         .nc-link { display: inline-block; margin-top: 10px; font-size: 12px; color: var(--nc); opacity: 0.7; transition: opacity 0.15s; }
         .nc-link:hover { opacity: 1; }
-
-        .cu-wrap { margin-bottom: 28px; border: 1px solid rgba(251,191,36,0.3); border-radius: var(--radius); background: rgba(251,191,36,0.04); overflow: hidden; }
-        .cu-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; cursor: pointer; gap: 12px; user-select: none; }
-        .cu-header:hover { background: rgba(251,191,36,0.07); }
-        .cu-header-left { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
-        .cu-header-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-        .cu-dot { width: 8px; height: 8px; border-radius: 50%; background: #fbbf24; flex-shrink: 0; }
-        .cu-title { font-size: 13px; font-weight: 700; color: #fbbf24; white-space: nowrap; }
-        .cu-period { font-size: 11px; color: var(--text-muted); }
-        .cu-chevron { font-size: 10px; color: var(--text-muted); }
-        .cu-body { padding: 20px; display: flex; flex-direction: column; gap: 24px; border-top: 1px solid rgba(251,191,36,0.15); }
 
         @media (max-width: 700px) { .notif-grid { grid-template-columns: 1fr; } }
       `}</style>

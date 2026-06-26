@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 
 export default function Estadisticas() {
   const [stats, setStats] = useState(null)
+  const [lastRefresh, setLastRefresh] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -10,6 +11,7 @@ export default function Estadisticas() {
       const res = await fetch('/api/stats/')
       if (!res.ok) throw new Error('Error al cargar estadísticas')
       setStats(await res.json())
+      setLastRefresh(new Date())
       setError(null)
     } catch (e) {
       setError(e.message)
@@ -25,7 +27,19 @@ export default function Estadisticas() {
 
   return (
     <div>
-      <h1 className="page-title">Estadísticas</h1>
+      <div className="page-header">
+        <div className="page-header-left">
+          <h1 className="page-title" style={{ marginBottom: 0 }}>Estadísticas</h1>
+        </div>
+        <div className="page-header-right">
+          {lastRefresh && (
+            <span className="refresh-time">
+              {lastRefresh.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}
+            </span>
+          )}
+          <button className="btn" onClick={fetchStats}>↻ Actualizar</button>
+        </div>
+      </div>
       {error && <div className="error-banner">⚠ {error}</div>}
 
       <div className="stat-grid">
@@ -82,6 +96,10 @@ export default function Estadisticas() {
       {loading && <p className="loading">Cargando estadísticas...</p>}
 
       <style>{`
+        .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+        .page-header-left { display: flex; align-items: center; gap: 12px; }
+        .page-header-right { display: flex; align-items: center; gap: 12px; }
+        .refresh-time { font-size: 12px; color: var(--text-muted); }
         .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 32px; }
 
         .stat-card {

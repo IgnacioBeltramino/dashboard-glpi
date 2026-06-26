@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useRef } from 'react'
 import Navbar from './components/Navbar'
+import DottedSurface from './components/DottedSurface'
 import Home from './pages/Home'
 import TicketsAbiertos from './pages/TicketsAbiertos'
 import SoporteAplicaciones from './pages/SoporteAplicaciones'
@@ -9,7 +10,7 @@ import Reportes from './pages/Reportes'
 import PasesProduccion from './pages/PasesProduccion'
 import './App.css'
 
-const VALID_TYPES = ['new_ticket', 'new_followup']
+const VALID_TYPES = ['new_ticket', 'new_followup', 'solution_rejected']
 
 function notifContent(data) {
   if (data.type === 'new_ticket') {
@@ -21,6 +22,9 @@ function notifContent(data) {
       title: 'Seguimiento en ticket #' + data.ticket_id,
       body: data.author + (text ? ': ' + text : ''),
     }
+  }
+  if (data.type === 'solution_rejected') {
+    return { title: 'Solución rechazada #' + data.ticket_id, body: data.ticket_title || '' }
   }
   return { title: 'Nueva notificacion GLPI', body: '' }
 }
@@ -40,8 +44,6 @@ export default function App() {
       return stored.filter(n => VALID_TYPES.includes(n.type))
     } catch { return [] }
   })
-  const [catchUp, setCatchUp] = useState(null)
-
   const seenRef = useRef(null)
   if (!seenRef.current) {
     try {
@@ -71,13 +73,6 @@ export default function App() {
         if (!res.ok || cancelled) return
         const events = await res.json()
         if (!events.length) return
-
-        const catchUpEvent = events.find(e => e.type === 'catch_up')
-        if (catchUpEvent) {
-          if (catchUpEvent.tickets.length > 0 || catchUpEvent.followups.length > 0) {
-            setCatchUp(catchUpEvent)
-          }
-        }
 
         const fresh = events
           .filter(e => VALID_TYPES.includes(e.type))
@@ -129,6 +124,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <DottedSurface />
       <Navbar page={page} onNavigate={setPage} notifCount={notifications.length} />
       <main className="main">
         {page === 'home' && (
@@ -136,8 +132,6 @@ export default function App() {
             notifications={notifications}
             onDismiss={dismissNotification}
             onRefresh={refreshNotifications}
-            catchUp={catchUp}
-            onDismissCatchUp={() => setCatchUp(null)}
           />
         )}
         {page === 'tickets' && <TicketsAbiertos />}

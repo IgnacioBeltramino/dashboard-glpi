@@ -112,11 +112,9 @@ async def debug_ticket_search(ticket_id: int):
 @app.get("/api/notifications/status")
 async def notifications_status():
     """Muestra el estado actual del sistema de notificaciones."""
-    from routers.notifications import _state, LAST_SEEN_FILE
+    from routers.notifications import _state
     return {
         "state": _state,
-        "last_seen_file_exists": LAST_SEEN_FILE.exists(),
-        "last_seen_content": LAST_SEEN_FILE.read_text() if LAST_SEEN_FILE.exists() else None,
         "group_id": glpi._group_id,
         "group_member_ids_cached": glpi._group_member_ids is not None,
     }
@@ -130,6 +128,11 @@ async def debug_telegram():
         "boss_chat_id": BOSS_CHAT_ID,
         "tech_id_map": TECH_ID_MAP,
     }
+
+
+@app.get("/api/debug/solution-options")
+async def debug_solution_options():
+    return await glpi._get("listSearchOptions/ITILSolution")
 
 
 @app.get("/api/debug/ticket-groups/{ticket_id}")

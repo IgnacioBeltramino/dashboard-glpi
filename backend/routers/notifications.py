@@ -3,8 +3,6 @@ import json
 import os
 import re
 import httpx
-from datetime import datetime, timedelta
-from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from glpi_client import glpi, FIELD_ID, FIELD_TITLE, FIELD_DATE_OPEN, FIELD_GROUP, FIELD_TECH, GLPI_WEB_URL
@@ -12,9 +10,6 @@ from glpi_client import glpi, FIELD_ID, FIELD_TITLE, FIELD_DATE_OPEN, FIELD_GROU
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
 POLL_INTERVAL = 30
-_last_seen_file = Path(os.path.dirname(__file__)).parent / "last_seen.json"
-LAST_SEEN_FILE = _last_seen_file
-MAX_CATCHUP_DAYS = 7
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 BOSS_CHAT_ID = os.getenv("TELEGRAM_BOSS_CHAT_ID", "").strip()
@@ -29,6 +24,7 @@ for _pair in os.getenv("TELEGRAM_TECH_IDS", "").split(","):
 _state = {
     "last_ticket_id": 0,
     "last_followup_id": 0,
+    "last_solution_id": 0,
     "initialized": False,
 }
 
@@ -106,30 +102,6 @@ async def _send_telegram_photo_to(photo_bytes: bytes, caption: str, chat_ids: li
                 print(f"[telegram] Error enviando foto a {chat_id}: {e}", flush=True)
 
 
-def _save_last_seen():
-    try:
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        _last_seen_file.write_text(json.dumps({"timestamp": ts}))
-    except Exception as e:
-        print(f"[notif] ERROR en _save_last_seen: {e}", flush=True)
-
-
-def _load_last_seen():
-    try:
-        if not _last_seen_file.exists():
-            return None
-        data = json.loads(_last_seen_file.read_text())
-        ts = data.get("timestamp")
-        if not ts:
-            return None
-        dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
-        if dt < datetime.now() - timedelta(days=MAX_CATCHUP_DAYS):
-            return None
-        return ts
-    except Exception:
-        return None
-
-
 async def _initialize_state():
     try:
         if not await glpi.get_group_id():
@@ -141,124 +113,21 @@ async def _initialize_state():
         followups = await glpi.get_recent_followups()
         if followups:
             _state["last_followup_id"] = max(int(f.get("7", 0) or 0) for f in followups)
-        if not _last_seen_file.exists():
-            _save_last_seen()
+        sol_result = await glpi._get("search/ITILSolution", {
+            "criteria[0][field]": "4",
+            "criteria[0][searchtype]": "equals",
+            "criteria[0][value]": "Ticket",
+            "forcedisplay[0]": "2",
+            "order": "DESC",
+            "sort": "2",
+            "range": "0-0",
+        })
+        sol_data = sol_result.get("data", [])
+        if sol_data:
+            _state["last_solution_id"] = int(sol_data[0].get("2", 0) or 0)
         _state["initialized"] = True
     except Exception as e:
         print(f"[notif] ERROR en _initialize_state: {e}", flush=True)
-
-
-async def _get_catch_up_events(since):
-    try:
-        group_id = await glpi.get_group_id()
-        if not group_id:
-            return None
-
-        t_result = await glpi._get("search/Ticket", {
-            "criteria[0][field]":      FIELD_GROUP,
-            "criteria[0][searchtype]": "equals",
-            "criteria[0][value]":      str(group_id),
-            "criteria[1][link]":       "AND",
-            "criteria[1][field]":      FIELD_DATE_OPEN,
-            "criteria[1][searchtype]": "morethan",
-            "criteria[1][value]":      since,
-            "forcedisplay[0]":         FIELD_ID,
-            "forcedisplay[1]":         FIELD_TITLE,
-            "forcedisplay[2]":         FIELD_DATE_OPEN,
-            "order":                   "DESC",
-            "sort":                    FIELD_DATE_OPEN,
-            "range":                   "0-49",
-        })
-        tickets_data = [
-            {
-                "type": "new_ticket",
-                "id": t.get(FIELD_ID),
-                "title": t.get(FIELD_TITLE, "Sin titulo"),
-                "opened_at": t.get(FIELD_DATE_OPEN, ""),
-            }
-            for t in t_result.get("data", [])
-        ]
-
-        f_result = await glpi._get("search/ITILFollowup", {
-            "criteria[0][field]":      "3",
-            "criteria[0][searchtype]": "morethan",
-            "criteria[0][value]":      since,
-            "forcedisplay[0]":         "7",
-            "forcedisplay[1]":         "1",
-            "forcedisplay[2]":         "5",
-            "forcedisplay[3]":         "3",
-            "order":                   "DESC",
-            "sort":                    "7",
-            "range":                   "0-49",
-        })
-        raw_followups = f_result.get("data", [])
-        followups_data = []
-
-        if raw_followups:
-            details = await asyncio.gather(*[
-                glpi.get_followup_detail(int(f["7"])) for f in raw_followups
-            ], return_exceptions=True)
-
-            all_ticket_ids = {
-                d["items_id"] for d in details
-                if isinstance(d, dict) and d.get("items_id")
-            }
-            group_ticket_ids, group_member_ids = await asyncio.gather(
-                glpi.tickets_in_group(all_ticket_ids),
-                glpi.get_group_member_ids(),
-            )
-            user_ids = {
-                str(d["users_id"]) for d in details
-                if isinstance(d, dict) and d.get("users_id")
-            }
-            info_map = {}
-            user_names = {}
-            if group_ticket_ids:
-                infos, user_names = await asyncio.gather(
-                    asyncio.gather(*[glpi.get_ticket_info(tid) for tid in group_ticket_ids]),
-                    glpi.resolve_user_names(user_ids),
-                )
-                info_map = dict(zip(group_ticket_ids, infos))
-            elif user_ids:
-                user_names = await glpi.resolve_user_names(user_ids)
-
-            for detail in details:
-                if not isinstance(detail, dict):
-                    continue
-                ticket_id = detail.get("items_id")
-                user_id = str(detail.get("users_id", ""))
-                info = info_map.get(ticket_id, {})
-                requester_id = info.get("requester_id", "")
-                is_external = user_id not in group_member_ids or (requester_id and user_id == requester_id)
-                if ticket_id in group_ticket_ids and is_external:
-                    followups_data.append({
-                        "type": "new_followup",
-                        "id": detail.get("id"),
-                        "ticket_id": ticket_id,
-                        "ticket_title": info.get("title", "Ticket #" + str(ticket_id)),
-                        "content": detail.get("content", ""),
-                        "author": user_names.get(user_id, "Desconocido"),
-                    })
-
-        if not tickets_data and not followups_data:
-            return None
-
-        n_tickets = len(tickets_data)
-        n_followups = len(followups_data)
-        boss_ids = [BOSS_CHAT_ID] if BOSS_CHAT_ID else []
-        await _send_telegram_to(
-            f"<b>Resumen desde {since}</b>\n{n_tickets} ticket(s) nuevo(s), {n_followups} seguimiento(s)",
-            boss_ids,
-        )
-
-        return {
-            "type": "catch_up",
-            "since": since,
-            "tickets": tickets_data,
-            "followups": followups_data,
-        }
-    except Exception:
-        return None
 
 
 async def _check_new_events():
@@ -291,7 +160,7 @@ async def _check_new_events():
                 msg = f"\U0001F3AB <b>Ticket nuevo #{tid}</b>\n{title}"
                 if description:
                     msg += f"\n\n{description}"
-                msg += f"\n\n\U0001F557Â {_format_hhmm(opened_at)} \u00B7 <a href=\"{_ticket_url(tid)}\">Ver ticket \u2192</a>"
+                msg += f"\n\n\U0001F557 {_format_hhmm(opened_at)} \u00B7 <a href=\"{_ticket_url(tid)}\">Ver ticket \u2192</a>"
                 print(f"[notif] Ticket #{tid}, tech={tech_id!r}", flush=True)
                 await _send_telegram_to(msg, recipients)
 
@@ -360,24 +229,54 @@ async def _check_new_events():
                             recipients,
                         )
                 _state["last_followup_id"] = max(_state["last_followup_id"], fid)
+
+        refused_solutions = await glpi.get_recent_refused_solutions(_state["last_solution_id"])
+        if refused_solutions:
+            ref_ticket_ids = {s["ticket_id"] for s in refused_solutions if s.get("ticket_id")}
+            if ref_ticket_ids:
+                group_ticket_ids, ticket_infos_list, assigned_techs_list = await asyncio.gather(
+                    glpi.tickets_in_group(ref_ticket_ids),
+                    asyncio.gather(*[glpi.get_ticket_info(tid) for tid in ref_ticket_ids]),
+                    asyncio.gather(*[glpi.get_ticket_assigned_tech(tid) for tid in ref_ticket_ids]),
+                )
+                info_map = dict(zip(ref_ticket_ids, ticket_infos_list))
+                tech_map = dict(zip(ref_ticket_ids, assigned_techs_list))
+            else:
+                group_ticket_ids = set()
+                info_map = {}
+                tech_map = {}
+            for sol in refused_solutions:
+                sol_id = sol["id"]
+                ticket_id = sol.get("ticket_id")
+                if ticket_id in group_ticket_ids:
+                    info = info_map.get(ticket_id, {})
+                    tech_id = tech_map.get(ticket_id, "")
+                    ticket_title = info.get("title", f"Ticket #{ticket_id}")
+                    recipients = _recipients_for(tech_id)
+                    rejection_time = _format_hhmm(sol.get("date", ""))
+                    print(f"[notif] Sol rechazada sol#{sol_id} tk#{ticket_id} tech={tech_id!r}", flush=True)
+                    events.append({
+                        "type": "solution_rejected",
+                        "id": sol_id,
+                        "ticket_id": ticket_id,
+                        "ticket_title": ticket_title,
+                    })
+                    await _send_telegram_to(
+                        f"❌ <b>Solución rechazada #{ticket_id}</b>\n{ticket_title}\n\U0001F557 {rejection_time} · <a href=\"{_ticket_url(ticket_id)}\">Ver ticket →</a>",
+                        recipients,
+                    )
+                _state["last_solution_id"] = max(_state["last_solution_id"], sol_id)
     except Exception as e:
         print(f"[notif] ERROR en _check_new_events: {e}", flush=True)
     return events
 
 
 async def _polling_loop():
-    since = _load_last_seen()
-    if since:
-        catch_up = await _get_catch_up_events(since)
-        if catch_up:
-            _pending_events.append(catch_up)
-
     while True:
         await asyncio.sleep(POLL_INTERVAL)
         events = await _check_new_events()
         if events:
             _pending_events.extend(events)
-        _save_last_seen()
 
 
 async def _event_generator():

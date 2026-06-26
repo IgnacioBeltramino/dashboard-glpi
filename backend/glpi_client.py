@@ -289,6 +289,44 @@ class GLPIClient:
         """Devuelve el detalle completo de un seguimiento (incluye items_id = ID del ticket)."""
         return await self._get(f"ITILFollowup/{followup_id}")
 
+    async def get_recent_refused_solutions(self, since_id: int) -> list:
+        """Soluciones de tickets rechazadas (status=3) con ID mayor a since_id."""
+        try:
+            result = await self._get("search/ITILSolution", {
+                "criteria[0][field]": "2",
+                "criteria[0][searchtype]": "morethan",
+                "criteria[0][value]": str(since_id),
+                "criteria[1][link]": "AND",
+                "criteria[1][field]": "4",
+                "criteria[1][searchtype]": "equals",
+                "criteria[1][value]": "Ticket",
+                "forcedisplay[0]": "2",
+                "order": "ASC",
+                "sort": "2",
+                "range": "0-19",
+            })
+            rows = result.get("data", [])
+            if not rows:
+                return []
+            details = await asyncio.gather(*[
+                self._get(f"ITILSolution/{int(r['2'])}")
+                for r in rows
+            ], return_exceptions=True)
+            refused = []
+            for detail in details:
+                if not isinstance(detail, dict):
+                    continue
+                if detail.get("status") == 3:
+                    refused.append({
+                        "id": detail.get("id"),
+                        "ticket_id": detail.get("items_id"),
+                        "date": detail.get("date_approval") or detail.get("date", ""),
+                    })
+            return refused
+        except Exception as e:
+            print(f"[glpi] ERROR en get_recent_refused_solutions: {e}", flush=True)
+            return []
+
     # ── Reportes ──────────────────────────────────────────────────────────────
 
     async def get_all_groups(self) -> list[dict]:
