@@ -8,7 +8,7 @@ Dashboard interno de monitoreo para GLPI, desarrollado para el equipo de Soporte
 ### 1. Clonar el repositorio
 
 ```bash
-git clone https://github.com/IgnacioBeltramino/dashboard-soporteApp.git
+git clone https://github.com/IgnacioBeltramino/dashboard-glpi
 cd dashboard-soporteApp
 ````
 
