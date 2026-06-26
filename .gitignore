@@ -1,6 +1,5 @@
 ﻿# Credenciales — NUNCA subir
 .env
-last_seen.json
 
 # Python
 __pycache__/
@@ -35,7 +34,7 @@ Thumbs.db
 *.sw?
 
 # Script de inicio local
-start.ps1
+Iniciar_dashboard.ps1
 
 # Claude Code
 .claude/

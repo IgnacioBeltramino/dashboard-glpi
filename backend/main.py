@@ -1,4 +1,5 @@
 ﻿import asyncio
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,11 +20,13 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
+FRONTEND_PORT = os.getenv("FRONTEND_PORT") or "5173"
+
 app = FastAPI(title="GLPI Dashboard API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[f"http://localhost:{FRONTEND_PORT}"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -192,3 +195,9 @@ async def debug_ticket_user(ticket_id: int):
     tech_id = await glpi.get_ticket_assigned_tech(ticket_id)
     return {"ticket_user_raw": result, "tech_id_detectado": tech_id}
 
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("BACKEND_PORT") or "8000")
+    uvicorn.run("main:app", host="0.0.0.0", reload=True, port=port)

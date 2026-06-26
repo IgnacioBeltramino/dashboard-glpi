@@ -78,7 +78,7 @@ export default function Home({ notifications, onDismiss, onRefresh }) {
   }
 
   const followups = notifications.filter(n => n.type === "new_followup")
-  const tickets   = notifications.filter(n => n.type === "new_ticket")
+  const tickets   = notifications.filter(n => n.type === "new_ticket" || n.type === "solution_rejected")
 
   return (
     <div>
