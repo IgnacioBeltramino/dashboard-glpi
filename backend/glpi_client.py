@@ -1,24 +1,25 @@
-﻿import asyncio
+import asyncio
 import httpx
 import os
 from typing import Optional
 from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 GLPI_URL = os.getenv("GLPI_URL")
 GLPI_WEB_URL = GLPI_URL.split("/apirest.php")[0] if GLPI_URL else ""
 APP_TOKEN = os.getenv("GLPI_APP_TOKEN")
 USER_TOKEN = os.getenv("GLPI_USER_TOKEN")
 
-# Campos confirmados para esta instalación de GLPI
+# Campos confirmados para esta instalaciÃ³n de GLPI
 FIELD_STATUS = "12"
 FIELD_TECH = "5"
 FIELD_GROUP = "8"
 FIELD_TITLE = "1"
 FIELD_ID = "2"
 FIELD_DATE_OPEN  = "15"
-FIELD_DATE_SOLVE = "17"  # solvedate (fecha de resolución)
+FIELD_DATE_SOLVE = "17"  # solvedate (fecha de resoluciÃ³n)
 FIELD_REQUESTER = "4"
 FIELD_DATE_DUE = "18"   # time_to_resolve
 FIELD_FORM_NAME = "120" # nombre del formulario (GLPI 11 nativo)
@@ -173,7 +174,7 @@ class GLPIClient:
         return {"data": all_data, "totalcount": total}
 
     async def _get_all_pages(self, endpoint: str, base_params: dict, page_size: int = 500) -> list:
-        """Trae todos los resultados paginando automáticamente."""
+        """Trae todos los resultados paginando automÃ¡ticamente."""
         first = await self._get(endpoint, {**base_params, "range": f"0-{page_size - 1}"})
         data = list(first.get("data", []))
         total = first.get("totalcount", 0)
@@ -181,7 +182,7 @@ class GLPIClient:
         if total <= page_size:
             return data
 
-        # Páginas restantes en paralelo
+        # PÃ¡ginas restantes en paralelo
         starts = range(page_size, total, page_size)
         pages = await asyncio.gather(*[
             self._get(endpoint, {**base_params, "range": f"{s}-{s + page_size - 1}"})
@@ -212,13 +213,13 @@ class GLPIClient:
         total_finalizados = counts[STATUS_SOLVED] + counts[STATUS_CLOSED]
         total_abiertos = sum(counts[s] for s in EN_CURSO + PENDIENTES)
 
-        # Tickets finalizados con técnico para ranking — todos, paginando
+        # Tickets finalizados con tÃ©cnico para ranking â€” todos, paginando
         solved_data, closed_data = await asyncio.gather(
             self._get_all_pages("search/Ticket", _ticket_params(group_id, STATUS_SOLVED, tech_display)),
             self._get_all_pages("search/Ticket", _ticket_params(group_id, STATUS_CLOSED, tech_display)),
         )
 
-        # Contar por ID de técnico primero
+        # Contar por ID de tÃ©cnico primero
         id_counts: dict[str, int] = {}
         for r in [solved_data, closed_data]:
             for ticket in (r if isinstance(r, list) else r.get("data", [])):
@@ -272,7 +273,7 @@ class GLPIClient:
         }
 
     async def get_recent_followups(self) -> list:
-        """Trae los 20 seguimientos más recientes."""
+        """Trae los 20 seguimientos mÃ¡s recientes."""
         params = {
             "forcedisplay[0]": "7",  # ID
             "forcedisplay[1]": "1",  # Contenido
@@ -313,21 +314,21 @@ class GLPIClient:
                 for r in rows
             ], return_exceptions=True)
             refused = []
-            for detail in details:
+            for row, detail in zip(rows, details):
                 if not isinstance(detail, dict):
                     continue
                 if detail.get("status") == 3:
                     refused.append({
-                        "id": detail.get("id"),
+                        "id": int(row["2"]),
                         "ticket_id": detail.get("items_id"),
                         "date": detail.get("date_approval") or detail.get("date", ""),
                     })
-            return refused
+            return [s for s in refused if s["id"] > since_id]
         except Exception as e:
             print(f"[glpi] ERROR en get_recent_refused_solutions: {e}", flush=True)
             return []
 
-    # ── Reportes ──────────────────────────────────────────────────────────────
+    # â”€â”€ Reportes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def get_all_groups(self) -> list[dict]:
         try:
@@ -357,7 +358,7 @@ class GLPIClient:
 
     async def get_technicians(self) -> list[dict]:
         """
-        Devuelve solo usuarios con perfil de soporte/técnico.
+        Devuelve solo usuarios con perfil de soporte/tÃ©cnico.
         Filtra por Profile_User usando perfiles cuyo nombre contenga
         keywords de soporte; fallback a todos los activos si falla.
         """
@@ -366,7 +367,7 @@ class GLPIClient:
             if not isinstance(profiles, list) or not profiles:
                 raise ValueError("no profiles")
 
-            TECH_KW    = {"técnico", "tecnico", "soporte", "super", "admin", "helpdesk", "it"}
+            TECH_KW    = {"tÃ©cnico", "tecnico", "soporte", "super", "admin", "helpdesk", "it"}
             EXCLUDE_KW = {"self-service", "self service", "autoservice", "observer"}
 
             tech_profile_ids = [
@@ -375,7 +376,7 @@ class GLPIClient:
                     and not any(ex in p.get("name", "").lower() for ex in EXCLUDE_KW))
             ]
 
-            # Si no matchea ningún keyword, excluir solo Self-Service
+            # Si no matchea ningÃºn keyword, excluir solo Self-Service
             if not tech_profile_ids:
                 tech_profile_ids = [
                     p["id"] for p in profiles
@@ -525,15 +526,16 @@ class GLPIClient:
         return ""
 
     async def get_ticket_info(self, ticket_id: int) -> dict:
-        """Devuelve título e ID del solicitante de un ticket."""
+        """Devuelve tÃ­tulo e ID del solicitante de un ticket."""
         try:
             ticket = await self._get(f"Ticket/{ticket_id}")
             return {
                 "title": ticket.get("name", f"Ticket #{ticket_id}"),
                 "requester_id": str(ticket.get("users_id_recipient") or ""),
+            "status": ticket.get("status"),
             }
         except Exception:
-            return {"title": f"Ticket #{ticket_id}", "requester_id": ""}
+            return {"title": f"Ticket #{ticket_id}", "requester_id": "", "status": None}
 
     async def get_ticket_content(self, ticket_id: int) -> str:
         try:
@@ -596,8 +598,8 @@ class GLPIClient:
     async def get_closed_by_day(self, date_from: str, date_to: str) -> dict[str, dict[str, int]]:
         """
         Tickets resueltos/cerrados (status 5 o 6) del grupo en [date_from, date_to],
-        agrupados por día de resolución y nombre de técnico.
-        Devuelve: { "YYYY-MM-DD": { "Nombre Técnico": count, ... }, ... }
+        agrupados por dÃ­a de resoluciÃ³n y nombre de tÃ©cnico.
+        Devuelve: { "YYYY-MM-DD": { "Nombre TÃ©cnico": count, ... }, ... }
         """
         group_id = await self.get_group_id()
 
@@ -686,10 +688,12 @@ class GLPIClient:
                 "title":      t.get(FIELD_TITLE),
                 "status":     "finalizado" if is_done else "pendiente",
                 "close_date": t.get(FIELD_DATE_SOLVE) if is_done else None,
-                "requester":  name_map.get(req_id, "—") if req_id else "—",
+                "requester":  name_map.get(req_id, "â€”") if req_id else "â€”",
             })
 
         return {"tickets": tickets, "total": total}
 
 
 glpi = GLPIClient()
+
+

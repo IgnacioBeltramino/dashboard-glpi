@@ -5,7 +5,7 @@ import re
 import httpx
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-from glpi_client import glpi, FIELD_ID, FIELD_TITLE, FIELD_DATE_OPEN, FIELD_GROUP, FIELD_TECH, GLPI_WEB_URL
+from glpi_client import glpi, FIELD_ID, FIELD_TITLE, FIELD_DATE_OPEN, FIELD_GROUP, FIELD_TECH, GLPI_WEB_URL, STATUS_CLOSED
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
@@ -208,7 +208,7 @@ async def _check_new_events():
                     info = info_map.get(ticket_id, {})
                     requester_id = info.get("requester_id", "")
                     is_external = user_id not in group_member_ids or (requester_id and user_id == requester_id)
-                    if ticket_id in group_ticket_ids and is_external:
+                    if ticket_id in group_ticket_ids and is_external and info.get("status") != STATUS_CLOSED:
                         tech_id = tech_map.get(ticket_id, "")
                         recipients = _recipients_for(tech_id)
                         ticket_title = info.get("title", "Ticket #" + str(ticket_id))
@@ -301,4 +301,5 @@ async def poll_notifications():
     events = list(_pending_events)
     _pending_events.clear()
     return events
+
 

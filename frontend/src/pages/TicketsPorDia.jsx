@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+﻿import { useState, useEffect, useRef, useCallback } from 'react'
 
 const TECNICOS = ['Gaston Puca', 'Gonzalo Galarza', 'Ignacio Beltramino']
 
@@ -8,7 +8,6 @@ function matchTech(glpiName, target) {
   return target.toLowerCase().split(' ').every(part => n.includes(part))
 }
 
-// Suma los tickets de `dayData` que correspondan a `tecnico`
 function countFor(dayData, tecnico) {
   return Object.entries(dayData || {}).reduce((sum, [name, count]) => {
     return sum + (matchTech(name, tecnico) ? count : 0)
@@ -17,7 +16,7 @@ function countFor(dayData, tecnico) {
 
 function getMondayOfCurrentWeek() {
   const today = new Date()
-  const day = today.getDay() // 0=Dom, 1=Lun, ..., 6=Sáb
+  const day = today.getDay()
   const diff = day === 0 ? -6 : 1 - day
   const d = new Date(today)
   d.setDate(today.getDate() + diff)
@@ -50,20 +49,77 @@ function isWeekend(iso) {
   return day === 0 || day === 6
 }
 
-export default function TicketsPorDia() {
+function getThisWeek() {
   const today = new Date().toISOString().slice(0, 10)
-  const defaultFrom = getMondayOfCurrentWeek()
+  return { from: getMondayOfCurrentWeek(), to: today }
+}
 
-  const [activeFrom, setActiveFrom] = useState(defaultFrom)
-  const [activeTo, setActiveTo]   = useState(today)
-  const [pendingFrom, setPendingFrom] = useState(defaultFrom)
-  const [pendingTo, setPendingTo]     = useState(today)
+function getLastWeek() {
+  const today = new Date()
+  const day = today.getDay()
+  const diff = day === 0 ? -6 : 1 - day
+  const mon = new Date(today)
+  mon.setDate(today.getDate() + diff - 7)
+  const sun = new Date(mon)
+  sun.setDate(mon.getDate() + 6)
+  return {
+    from: mon.toISOString().slice(0, 10),
+    to: sun.toISOString().slice(0, 10),
+  }
+}
 
-  const [showRange, setShowRange] = useState(false)
-  const [data, setData]           = useState(null)
-  const [loading, setLoading]     = useState(true)
-  const [error, setError]         = useState(null)
+function getThisMonth() {
+  const today = new Date()
+  const from = new Date(today.getFullYear(), today.getMonth(), 1)
+    .toISOString().slice(0, 10)
+  return { from, to: today.toISOString().slice(0, 10) }
+}
+
+function rangeFor(preset) {
+  if (preset === 'semana-pasada') return getLastWeek()
+  if (preset === 'este-mes')      return getThisMonth()
+  return getThisWeek()
+}
+
+export default function TicketsPorDia() {
+  const [preset, setPreset]         = useState('esta-semana')
+  const [activeFrom, setActiveFrom] = useState(() => getThisWeek().from)
+  const [activeTo, setActiveTo]     = useState(() => getThisWeek().to)
+  const [data, setData]             = useState(null)
+  const [loading, setLoading]       = useState(true)
+  const [error, setError]           = useState(null)
   const [lastRefresh, setLastRefresh] = useState(null)
+
+  const resizeRef = useRef(null)
+  const [colWidths, setColWidths] = useState(() => {
+    const w = { day: 80, total: 70 }
+    TECNICOS.forEach(t => { w[t] = 110 })
+    return w
+  })
+
+  const handleResizeMove = useCallback((e) => {
+    if (!resizeRef.current) return
+    const { colKey, startX, startWidth } = resizeRef.current
+    const newWidth = Math.max(50, startWidth + (e.clientX - startX))
+    setColWidths(prev => ({ ...prev, [colKey]: newWidth }))
+  }, [])
+
+  const handleResizeEnd = useCallback(() => {
+    resizeRef.current = null
+    document.removeEventListener('mousemove', handleResizeMove)
+    document.removeEventListener('mouseup', handleResizeEnd)
+  }, [handleResizeMove])
+
+  const handleResizeStart = useCallback((e, colKey) => {
+    e.preventDefault()
+    resizeRef.current = {
+      colKey,
+      startX: e.clientX,
+      startWidth: colWidths[colKey],
+    }
+    document.addEventListener('mousemove', handleResizeMove)
+    document.addEventListener('mouseup', handleResizeEnd)
+  }, [colWidths, handleResizeMove, handleResizeEnd])
 
   const fetchData = async (from, to) => {
     setLoading(true)
@@ -82,14 +138,11 @@ export default function TicketsPorDia() {
     }
   }
 
-  useEffect(() => { fetchData(defaultFrom, today) }, [])
+  useEffect(() => {
+    const { from, to } = rangeFor(preset)
+    fetchData(from, to)
+  }, [preset])
 
-  const handleSearch = () => {
-    fetchData(pendingFrom, pendingTo)
-    setShowRange(false)
-  }
-
-  // ── construir tabla ────────────────────────────────────────────────────────
   const days = getDaysInRange(activeFrom, activeTo)
   const techs = TECNICOS
 
@@ -101,7 +154,6 @@ export default function TicketsPorDia() {
 
   return (
     <div>
-      {/* Header */}
       <div className="page-header">
         <div className="page-header-left">
           <h1 className="page-title" style={{ marginBottom: 0 }}>Cerrados por Día</h1>
@@ -112,65 +164,27 @@ export default function TicketsPorDia() {
               {lastRefresh.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false })}
             </span>
           )}
-          <button
-            className="btn"
-            style={{ fontSize: 12, padding: '6px 14px' }}
-            onClick={() => setShowRange(s => !s)}
-          >
-            {showRange ? '✕ Cerrar' : '📅 Rango'}
-          </button>
-          <button className="btn" onClick={() => fetchData(activeFrom, activeTo)}>
+          {[
+            { key: 'esta-semana',   label: 'Esta semana' },
+            { key: 'semana-pasada', label: 'Semana pasada' },
+            { key: 'este-mes',      label: 'Este mes' },
+          ].map(({ key, label }) => (
+            <button
+              key={key}
+              className={`pdd-preset-tab${preset === key ? ' pdd-preset-tab--active' : ''}`}
+              onClick={() => setPreset(key)}
+            >
+              {label}
+            </button>
+          ))}
+          <button className="btn" onClick={() => { const { from, to } = rangeFor(preset); fetchData(from, to) }}>
             ↻ Actualizar
           </button>
         </div>
       </div>
 
-      {/* Range picker colapsable */}
-      {showRange && (
-        <div className="card pdd-range-bar">
-          <div className="pdd-range-inner">
-            <div className="pdd-filter-group">
-              <label className="pdd-label">Desde</label>
-              <input
-                type="date"
-                className="pdd-date-input"
-                value={pendingFrom}
-                onChange={e => setPendingFrom(e.target.value)}
-              />
-            </div>
-            <div className="pdd-filter-group">
-              <label className="pdd-label">Hasta</label>
-              <input
-                type="date"
-                className="pdd-date-input"
-                value={pendingTo}
-                onChange={e => setPendingTo(e.target.value)}
-              />
-            </div>
-            <button className="pdd-search-btn" onClick={handleSearch}>
-              Buscar
-            </button>
-            <button
-              className="pdd-preset-btn"
-              style={{ alignSelf: 'flex-end' }}
-              onClick={() => {
-                const from = getMondayOfCurrentWeek()
-                const to   = new Date().toISOString().slice(0, 10)
-                setPendingFrom(from)
-                setPendingTo(to)
-                fetchData(from, to)
-                setShowRange(false)
-              }}
-            >
-              Semana actual
-            </button>
-          </div>
-        </div>
-      )}
-
       {error && <div className="error-banner">⚠ {error}</div>}
 
-      {/* Tabla */}
       {loading ? (
         <div className="loading">Cargando…</div>
       ) : data !== null && (
@@ -178,20 +192,32 @@ export default function TicketsPorDia() {
           <div className="loading">Sin tickets cerrados en el período.</div>
         ) : (
           <div className="pdd-scroll">
-            <table className="pdd-table">
+            <table className="pdd-table" style={{ tableLayout: 'fixed', width: '100%' }}>
+              <colgroup>
+                <col style={{ width: colWidths.day }} />
+                {TECNICOS.map(t => <col key={t} style={{ width: colWidths[t] }} />)}
+                <col style={{ width: colWidths.total }} />
+              </colgroup>
               <thead>
                 <tr>
-                  <th className="pdd-th pdd-th-day">Día</th>
+                  <th className="pdd-th pdd-th-day">
+                    Día
+                    <div className="col-resize-handle" onMouseDown={e => handleResizeStart(e, 'day')} />
+                  </th>
                   {techs.map(t => {
                     const parts = t.split(' ')
                     return (
                       <th key={t} className="pdd-th pdd-th-tech">
                         {parts[0]}
                         {parts.length > 1 && <><br /><span className="pdd-th-last">{parts.slice(1).join(' ')}</span></>}
+                        <div className="col-resize-handle" onMouseDown={e => handleResizeStart(e, t)} />
                       </th>
                     )
                   })}
-                  <th className="pdd-th pdd-th-total">Total</th>
+                  <th className="pdd-th pdd-th-total">
+                    Total
+                    <div className="col-resize-handle" onMouseDown={e => handleResizeStart(e, 'total')} />
+                  </th>
                 </tr>
               </thead>
 
@@ -244,40 +270,26 @@ export default function TicketsPorDia() {
       <style>{`
         .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
         .page-header-left { display: flex; align-items: center; gap: 12px; }
-        .page-header-right { display: flex; align-items: center; gap: 12px; }
+        .page-header-right { display: flex; align-items: center; gap: 8px; }
         .refresh-time { font-size: 12px; color: var(--text-muted); }
 
-        /* Range bar */
-        .pdd-range-bar { padding: 16px 20px; margin-bottom: 20px; }
-        .pdd-range-inner { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
-        .pdd-filter-group { display: flex; flex-direction: column; gap: 6px; }
-        .pdd-label { font-size: 11px; color: var(--text-muted); font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase; }
-        .pdd-date-input {
-          background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
-          color: var(--text); font-family: inherit; font-size: 13px;
-          padding: 7px 10px; outline: none; transition: border-color 0.15s;
+        .pdd-preset-tab {
+          background: var(--surface2); color: var(--text-muted);
+          border: 1px solid var(--border); border-radius: 8px;
+          font-family: inherit; font-size: 12px; font-weight: 500;
+          padding: 6px 14px; cursor: pointer; transition: all 0.15s;
+          white-space: nowrap;
         }
-        .pdd-date-input:focus { border-color: #404040; }
-        .pdd-preset-btn {
-          background: var(--surface2); color: var(--text); border: 1px solid var(--border);
-          border-radius: 8px; font-family: inherit; font-size: 13px;
-          font-weight: 500; padding: 7px 14px; cursor: pointer;
-          transition: background 0.15s, color 0.15s; white-space: nowrap;
+        .pdd-preset-tab:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+        .pdd-preset-tab--active {
+          background: rgba(255,255,255,0.08);
+          border-color: rgba(255,255,255,0.25);
+          color: var(--text);
         }
-        .pdd-preset-btn:hover { background: rgba(255,255,255,0.08); }
-        .pdd-search-btn {
-          background: var(--text); color: var(--bg); border: none;
-          border-radius: 8px; font-family: inherit; font-size: 13px;
-          font-weight: 600; padding: 8px 20px; cursor: pointer;
-          transition: opacity 0.15s; align-self: flex-end;
-        }
-        .pdd-search-btn:hover { opacity: 0.85; }
 
-        /* Scroll wrapper — tabla puede ser ancha */
         .pdd-scroll { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
 
-        /* Tabla */
-        .pdd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .pdd-table { border-collapse: collapse; font-size: 13px; }
 
         .pdd-th {
           padding: 11px 18px;
@@ -287,19 +299,14 @@ export default function TicketsPorDia() {
           text-transform: uppercase; letter-spacing: 0.4px;
           color: var(--text-muted);
           white-space: nowrap;
+          position: relative;
         }
         .pdd-th-day { text-align: left; position: sticky; left: 0; z-index: 2; }
         .pdd-th-tech { text-align: center; color: var(--text); font-size: 12px; text-transform: none; letter-spacing: 0; line-height: 1.3; }
         .pdd-th-last { font-weight: 400; color: var(--text-muted); }
-        .pdd-th-total {
-          text-align: center;
-          border-left: 1px solid var(--border);
-        }
+        .pdd-th-total { text-align: center; border-left: 1px solid var(--border); }
 
-        .pdd-td {
-          border-bottom: 1px solid rgba(255,255,255,0.04);
-          vertical-align: middle;
-        }
+        .pdd-td { border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }
         .pdd-td-day {
           padding: 8px 16px;
           background: var(--surface);
@@ -325,15 +332,20 @@ export default function TicketsPorDia() {
         }
         .pdd-zero { color: var(--text-muted); opacity: 0.35; }
 
-        /* Fines de semana */
         .pdd-weekend .pdd-date,
         .pdd-weekend .pdd-weekday { opacity: 0.4; }
         .pdd-weekend .pdd-count   { background: rgba(79,142,247,0.06); }
 
-        /* Footer */
         .pdd-foot-row .pdd-td { border-top: 1px solid var(--border); border-bottom: none; background: var(--surface2); }
         .pdd-foot-label { font-weight: 700; color: var(--text); }
         .pdd-foot-count { font-size: 15px; font-weight: 700; color: var(--text); }
+
+        .col-resize-handle {
+          position: absolute; right: 0; top: 0; bottom: 0;
+          width: 5px; cursor: col-resize; background: transparent;
+          user-select: none;
+        }
+        .col-resize-handle:hover { background: rgba(255,255,255,0.15); }
       `}</style>
     </div>
   )
